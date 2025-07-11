@@ -1,0 +1,13 @@
+[project]
+name = "comfyui-universal-asset-downloader"
+description = "A custom node for ComfyUI that intelligently downloads assets from Civitai, Hugging Face, and MEGA."
+version = "1.0.0"
+license = {file = "LICENSE"}
+
+[project.urls]
+Repository = "https://github.com/thaakeno/comfyui-universal-asset-downloader"
+
+[tool.comfy]
+PublisherId = "thaakeno"
+DisplayName = "comfyui-universal-asset-downloader"
+Icon = ""
