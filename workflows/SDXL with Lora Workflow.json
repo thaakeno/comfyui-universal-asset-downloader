@@ -1,0 +1,826 @@
+{
+  "id": "91d5d71b-f6a4-4ec3-bfbe-e4d6a84ae4b4",
+  "revision": 0,
+  "last_node_id": 32,
+  "last_link_id": 40,
+  "nodes": [
+    {
+      "id": 27,
+      "type": "PrimitiveNode",
+      "pos": [
+        565,
+        162
+      ],
+      "size": [
+        315,
+        82
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "INT",
+          "type": "INT",
+          "widget": {
+            "name": "seed"
+          },
+          "links": [
+            29
+          ]
+        }
+      ],
+      "title": "Seed",
+      "properties": {
+        "Run widget replace on values": false
+      },
+      "widgets_values": [
+        1009911983065098,
+        "randomize"
+      ]
+    },
+    {
+      "id": 28,
+      "type": "PrimitiveNode",
+      "pos": [
+        565,
+        284
+      ],
+      "size": [
+        315,
+        82
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "INT",
+          "type": "INT",
+          "widget": {
+            "name": "steps"
+          },
+          "links": [
+            30
+          ]
+        }
+      ],
+      "title": "Steps",
+      "properties": {
+        "Run widget replace on values": false
+      },
+      "widgets_values": [
+        29,
+        "fixed"
+      ]
+    },
+    {
+      "id": 29,
+      "type": "PrimitiveNode",
+      "pos": [
+        565,
+        406
+      ],
+      "size": [
+        315,
+        82
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "FLOAT",
+          "type": "FLOAT",
+          "widget": {
+            "name": "cfg"
+          },
+          "links": [
+            31
+          ]
+        }
+      ],
+      "title": "CFG",
+      "properties": {
+        "Run widget replace on values": false
+      },
+      "widgets_values": [
+        4.5,
+        "fixed"
+      ]
+    },
+    {
+      "id": 9,
+      "type": "EmptyLatentImage",
+      "pos": [
+        565,
+        968
+      ],
+      "size": [
+        420,
+        106
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "links": [
+            9
+          ]
+        }
+      ],
+      "title": "Image & Batch Size",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.43",
+        "Node name for S&R": "EmptyLatentImage"
+      },
+      "widgets_values": [
+        1024,
+        1024,
+        1
+      ]
+    },
+    {
+      "id": 3,
+      "type": "KSampler",
+      "pos": [
+        1085,
+        162
+      ],
+      "size": [
+        315,
+        474
+      ],
+      "flags": {},
+      "order": 11,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 28
+        },
+        {
+          "name": "positive",
+          "type": "CONDITIONING",
+          "link": 7
+        },
+        {
+          "name": "negative",
+          "type": "CONDITIONING",
+          "link": 8
+        },
+        {
+          "name": "latent_image",
+          "type": "LATENT",
+          "link": 9
+        },
+        {
+          "name": "seed",
+          "type": "INT",
+          "widget": {
+            "name": "seed"
+          },
+          "link": 29
+        },
+        {
+          "name": "steps",
+          "type": "INT",
+          "widget": {
+            "name": "steps"
+          },
+          "link": 30
+        },
+        {
+          "name": "cfg",
+          "type": "FLOAT",
+          "widget": {
+            "name": "cfg"
+          },
+          "link": 31
+        }
+      ],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "links": [
+            32
+          ]
+        }
+      ],
+      "title": "Generate (KSampler)",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.43",
+        "Node name for S&R": "KSampler"
+      },
+      "widgets_values": [
+        1009911983065098,
+        "randomize",
+        29,
+        4.5,
+        "euler_ancestral",
+        "karras",
+        1
+      ]
+    },
+    {
+      "id": 8,
+      "type": "VAEDecode",
+      "pos": [
+        1500,
+        162
+      ],
+      "size": [
+        210,
+        46
+      ],
+      "flags": {},
+      "order": 12,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "link": 32
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 23
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            33
+          ]
+        }
+      ],
+      "title": "Decode Latent",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.43",
+        "Node name for S&R": "VAEDecode"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 10,
+      "type": "SaveImage",
+      "pos": [
+        1500,
+        248
+      ],
+      "size": [
+        380,
+        430
+      ],
+      "flags": {},
+      "order": 13,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 33
+        }
+      ],
+      "outputs": [],
+      "title": "Save Output Image",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.43",
+        "Node name for S&R": "SaveImage"
+      },
+      "widgets_values": [
+        "ComfyUI_SDXL_Lora"
+      ]
+    },
+    {
+      "id": 25,
+      "type": "ApplyFBCacheOnModel",
+      "pos": [
+        71.79145812988281,
+        542.6181030273438
+      ],
+      "size": [
+        315,
+        154
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 38
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            27
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "wavespeed",
+        "ver": "1.1.8",
+        "Node name for S&R": "ApplyFBCacheOnModel"
+      },
+      "widgets_values": [
+        "diffusion_model",
+        0.2,
+        0,
+        1,
+        -1
+      ]
+    },
+    {
+      "id": 26,
+      "type": "EnhancedCompileModel",
+      "pos": [
+        74.01353454589844,
+        742.2772827148438
+      ],
+      "size": [
+        315,
+        310
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "*",
+          "link": 27
+        }
+      ],
+      "outputs": [
+        {
+          "name": "*",
+          "type": "*",
+          "links": [
+            28
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "wavespeed",
+        "ver": "1.1.8",
+        "Node name for S&R": "EnhancedCompileModel"
+      },
+      "widgets_values": [
+        true,
+        "diffusion_model",
+        "torch.compile",
+        false,
+        false,
+        "",
+        "",
+        false,
+        "inductor"
+      ]
+    },
+    {
+      "id": 7,
+      "type": "CLIPTextEncode",
+      "pos": [
+        565,
+        748
+      ],
+      "size": [
+        420,
+        180
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 39
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "links": [
+            8
+          ]
+        }
+      ],
+      "title": "Negative Prompt",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.43",
+        "Node name for S&R": "CLIPTextEncode"
+      },
+      "widgets_values": [
+        "score_5, score_4, score_3, ugly, bad hands, wide shoulders, (text, logo, signed, signiture:1), forehead, sleepy, eyelids, loli, child,"
+      ],
+      "color": "#322",
+      "bgcolor": "#533"
+    },
+    {
+      "id": 6,
+      "type": "CLIPTextEncode",
+      "pos": [
+        565,
+        528
+      ],
+      "size": [
+        420,
+        180
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 40
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "links": [
+            7
+          ]
+        }
+      ],
+      "title": "Positive Prompt",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.43",
+        "Node name for S&R": "CLIPTextEncode"
+      },
+      "widgets_values": [
+        ""
+      ],
+      "color": "#232",
+      "bgcolor": "#353"
+    },
+    {
+      "id": 31,
+      "type": "Lora Loader Stack (rgthree)",
+      "pos": [
+        69.76026153564453,
+        260.1344299316406
+      ],
+      "size": [
+        271.8785095214844,
+        246
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 36
+        },
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 37
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            38
+          ]
+        },
+        {
+          "name": "CLIP",
+          "type": "CLIP",
+          "links": [
+            39,
+            40
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "rgthree-comfy",
+        "ver": "f754c4765849aa748abb35a1f030a5ed6474a69b",
+        "Node name for S&R": "Lora Loader Stack (rgthree)"
+      },
+      "widgets_values": [
+        "None",
+        1,
+        "None",
+        0.6500000000000001,
+        "None",
+        1,
+        "None",
+        1
+      ]
+    },
+    {
+      "id": 4,
+      "type": "CheckpointLoaderSimple",
+      "pos": [
+        59.519981384277344,
+        122.39997100830078
+      ],
+      "size": [
+        315,
+        98
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            36
+          ]
+        },
+        {
+          "name": "CLIP",
+          "type": "CLIP",
+          "links": [
+            37
+          ]
+        },
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            23
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.43",
+        "Node name for S&R": "CheckpointLoaderSimple"
+      },
+      "widgets_values": [
+        "juggernautXL_ragnarokBy.safetensors"
+      ]
+    },
+    {
+      "id": 32,
+      "type": "UniversalAssetDownloader",
+      "pos": [
+        -444.8973388671875,
+        97.0475082397461
+      ],
+      "size": [
+        400,
+        256
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "download_message",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-universal-asset-downloader",
+        "ver": "4a71b36b86cd7a84a77b7a077ed05a81e3a9e1c3",
+        "Node name for S&R": "UniversalAssetDownloader"
+      },
+      "widgets_values": [
+        "",
+        "Auto",
+        false,
+        "",
+        "",
+        "./",
+        "download",
+        ""
+      ]
+    }
+  ],
+  "links": [
+    [
+      7,
+      6,
+      0,
+      3,
+      1,
+      "CONDITIONING"
+    ],
+    [
+      8,
+      7,
+      0,
+      3,
+      2,
+      "CONDITIONING"
+    ],
+    [
+      9,
+      9,
+      0,
+      3,
+      3,
+      "LATENT"
+    ],
+    [
+      23,
+      4,
+      2,
+      8,
+      1,
+      "VAE"
+    ],
+    [
+      27,
+      25,
+      0,
+      26,
+      0,
+      "*"
+    ],
+    [
+      28,
+      26,
+      0,
+      3,
+      0,
+      "MODEL"
+    ],
+    [
+      29,
+      27,
+      0,
+      3,
+      4,
+      "INT"
+    ],
+    [
+      30,
+      28,
+      0,
+      3,
+      5,
+      "INT"
+    ],
+    [
+      31,
+      29,
+      0,
+      3,
+      6,
+      "FLOAT"
+    ],
+    [
+      32,
+      3,
+      0,
+      8,
+      0,
+      "LATENT"
+    ],
+    [
+      33,
+      8,
+      0,
+      10,
+      0,
+      "IMAGE"
+    ],
+    [
+      36,
+      4,
+      0,
+      31,
+      0,
+      "MODEL"
+    ],
+    [
+      37,
+      4,
+      1,
+      31,
+      1,
+      "CLIP"
+    ],
+    [
+      38,
+      31,
+      0,
+      25,
+      0,
+      "MODEL"
+    ],
+    [
+      39,
+      31,
+      1,
+      7,
+      0,
+      "CLIP"
+    ],
+    [
+      40,
+      31,
+      1,
+      6,
+      0,
+      "CLIP"
+    ]
+  ],
+  "groups": [
+    {
+      "id": 1,
+      "title": "1. LOADERS",
+      "bounding": [
+        50,
+        50,
+        457.54644775390625,
+        1034.693603515625
+      ],
+      "color": "#3f5159",
+      "font_size": 24,
+      "flags": {}
+    },
+    {
+      "id": 2,
+      "title": "2. INPUTS",
+      "bounding": [
+        540,
+        50,
+        470,
+        1074
+      ],
+      "color": "#593930",
+      "font_size": 24,
+      "flags": {}
+    },
+    {
+      "id": 3,
+      "title": "3. SAMPLING",
+      "bounding": [
+        1035,
+        50,
+        402.41436767578125,
+        599.1495361328125
+      ],
+      "color": "#3f593f",
+      "font_size": 24,
+      "flags": {}
+    },
+    {
+      "id": 4,
+      "title": "4. OUTPUT",
+      "bounding": [
+        1475,
+        50,
+        460,
+        678
+      ],
+      "color": "#594f3f",
+      "font_size": 24,
+      "flags": {}
+    }
+  ],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.6303940863128489,
+      "offset": [
+        564.1879616598794,
+        124.0839059445897
+      ]
+    },
+    "frontendVersion": "1.23.4"
+  },
+  "version": 0.4
+}
