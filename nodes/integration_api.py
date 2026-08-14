@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -13,7 +14,7 @@ from server import PromptServer
 from . import smart_asset_service as service
 from .hf_xet_download import configure_xet_environment, stage_huggingface_asset
 
-UAD_VERSION = "2.1.1"
+UAD_VERSION = "2.1.2"
 MAX_BATCH_ITEMS = 64
 
 # Extend the v2 destination vocabulary before any analysis happens. These
@@ -22,6 +23,10 @@ service.ALLOWED_DESTINATIONS.update({"vae_approx", "pdd_heads"})
 
 _ORIGINAL_INFER_DESTINATION = service.infer_destination
 _ORIGINAL_DOWNLOAD_ASSETS = service.download_assets
+
+
+def _console(message: str) -> None:
+    print(f"[UAD] {message}", flush=True)
 
 
 def _enhanced_infer_destination(
@@ -133,7 +138,10 @@ def _download_huggingface_xet(
     expected_hash = str(asset.get("sha256") or "").lower()
 
     if target.exists() and not force:
+        _console(f"Existing file · deep verification before skip · {target.name}")
+        verify_started = time.monotonic()
         verification = service.verify_file(target, expected_size, expected_hash)
+        _console(f"Existing verification finished · {target.name} · {time.monotonic() - verify_started:.2f}s")
         if verification["ok"]:
             return {**verification, "skipped": True, "asset": asset, "backend": "hf_xet"}
         raise ValueError(
@@ -160,17 +168,32 @@ def _download_huggingface_xet(
             force=force,
             progress_callback=progress_callback,
         )
+        _console(
+            "Xet transfer finished · "
+            f"{target.name} · hp={'ON' if profile.get('high_performance') else 'adaptive'} · "
+            f"hub={profile.get('huggingface_hub', 'unknown')} · hf_xet={profile.get('hf_xet', 'unknown')} · "
+            f"progress={profile.get('progress_bridge', 'unknown')}"
+        )
+
+        verify_started = time.monotonic()
+        if expected_hash:
+            _console(f"SHA256 verification started · {target.name} · {service.human_size(expected_size)}")
+        else:
+            _console(f"Final format/size verification started · {target.name}")
         staged_verification = service.verify_file(downloaded, expected_size, expected_hash)
         if not staged_verification["ok"]:
             raise IOError(staged_verification.get("message") or f"Verification failed for {target.name}.")
+        _console(f"Verification passed · {target.name} · {time.monotonic() - verify_started:.2f}s")
 
-        # Same-filesystem staging means os.replace is atomic. With force=True,
-        # the old file stays intact until the replacement has already passed
-        # size/hash/format verification.
+        # Same-filesystem staging means os.replace is atomic. The staged bytes
+        # have already passed SHA256 verification, so do not reread a multi-GB
+        # model a second time after the atomic rename. Recheck size/header only.
         os.replace(downloaded, target)
-        verification = service.verify_file(target, expected_size, expected_hash)
+        verification = service.verify_file(target, expected_size, "")
         if not verification["ok"]:
             raise IOError(verification.get("message") or f"Final verification failed for {target.name}.")
+        verification["sha256"] = staged_verification.get("sha256") or expected_hash
+        verification["verification_level"] = "deep"
         return {
             **verification,
             "skipped": False,
@@ -279,12 +302,15 @@ async def api_status(_request):
             "capabilities": {
                 "analyze": True,
                 "verify": True,
+                "verify_fast": True,
+                "verify_fast_hashless": True,
                 "install": True,
                 "provider_hashes": True,
                 "atomic_downloads": True,
                 "external_integration": True,
                 "nonblocking_analysis": True,
                 "rich_progress": True,
+                "console_progress": True,
                 "pdd_heads": True,
                 "hf_xet": True,
                 "hf_xet_high_performance": bool(profile.get("high_performance")),
@@ -309,10 +335,17 @@ async def api_install(request):
         total_expected = sum(int(item.get("size_bytes") or 0) for item in validated)
         completed_before = 0
         file_count = len(validated)
+        profile = _xet_profile()
+        _console(
+            f"Install started · {file_count} file(s) · {service.human_size(total_expected)} · "
+            f"HF backend=hf_xet · hp={'ON' if profile.get('high_performance') else 'adaptive'} "
+            f"({profile.get('reason', 'auto')})"
+        )
 
         results: list[dict[str, Any]] = []
         for file_zero_index, asset in enumerate(validated):
             file_index = file_zero_index + 1
+            console_state = {"percent": -5, "time": 0.0}
 
             def progress(downloaded: int, total: int, current_asset: dict[str, Any]) -> None:
                 if total_expected > 0:
@@ -333,8 +366,29 @@ async def api_install(request):
                     file_count=file_count,
                 )
 
+                now = time.monotonic()
+                file_percent = (downloaded / total * 100.0) if total else 0.0
+                if (
+                    downloaded == total
+                    or file_percent >= console_state["percent"] + 5
+                    or now - console_state["time"] >= 5.0
+                ):
+                    console_state["percent"] = int(file_percent // 5) * 5
+                    console_state["time"] = now
+                    amount = (
+                        f"{service.human_size(downloaded)} / {service.human_size(total)}"
+                        if total
+                        else service.human_size(downloaded)
+                    )
+                    pct = f" · {file_percent:.0f}%" if total else ""
+                    _console(f"[{file_index}/{file_count}] {current_asset.get('filename', 'model')} · {amount}{pct}")
+
             starting_progress = (file_zero_index / max(1, file_count)) * 100.0
             backend = "Xet" if asset.get("provider") == "huggingface" else asset.get("provider", "provider")
+            _console(
+                f"[{file_index}/{file_count}] Preparing {asset.get('filename', 'model')} · "
+                f"{backend} → models/{asset.get('destination', 'unclassified')}"
+            )
             _send_external_progress(
                 node_id,
                 f"Preparing {asset.get('filename', 'model')} · {backend}",
@@ -345,6 +399,7 @@ async def api_install(request):
                 file_index=file_index,
                 file_count=file_count,
             )
+            batch_started = time.monotonic()
             batch = await asyncio.to_thread(
                 secure_download_assets,
                 [asset],
@@ -355,6 +410,12 @@ async def api_install(request):
             )
             results.extend(batch)
             completed_before += int(asset.get("size_bytes") or 0)
+            result = batch[-1] if batch else {}
+            _console(
+                f"[{file_index}/{file_count}] Complete {asset.get('filename', 'model')} · "
+                f"backend={result.get('backend') or backend} · "
+                f"{'reused' if result.get('skipped') else 'installed'} · {time.monotonic() - batch_started:.2f}s"
+            )
 
         _send_external_progress(
             node_id,
@@ -365,6 +426,7 @@ async def api_install(request):
             file_index=file_count if file_count else None,
             file_count=file_count if file_count else None,
         )
+        _console(f"Install complete · {file_count} file(s) · {service.human_size(total_expected)}")
         compact = []
         for result in results:
             asset = result.get("asset") or {}
@@ -386,6 +448,7 @@ async def api_install(request):
         return web.json_response({"ok": True, "results": compact})
     except Exception as exc:
         _send_external_progress(node_id, f"Install failed: {exc}", 0.0)
+        _console(f"Install failed · {exc}")
         return web.json_response({"ok": False, "error": str(exc)}, status=400)
 
 

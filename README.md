@@ -11,7 +11,7 @@ Paste a Hugging Face or Civitai link. UAD inspects provider metadata first, clas
   <img alt="ComfyUI custom node" src="https://img.shields.io/badge/ComfyUI-Custom%20Node-0EA5E9?style=for-the-badge&labelColor=171B1F">
   <img alt="Hugging Face Xet" src="https://img.shields.io/badge/Hugging%20Face-hf__xet-FFD21E?style=for-the-badge&logo=huggingface&logoColor=111827&labelColor=171B1F">
   <img alt="Verified installs" src="https://img.shields.io/badge/Install-Verified%20%2B%20Atomic-A855F7?style=for-the-badge&labelColor=171B1F">
-  <img alt="Version 2.1.1" src="https://img.shields.io/badge/Version-2.1.1-F59E0B?style=for-the-badge&labelColor=171B1F">
+  <img alt="Version 2.1.2" src="https://img.shields.io/badge/Version-2.1.2-F59E0B?style=for-the-badge&labelColor=171B1F">
   <a href="#license"><img alt="AGPLv3 license" src="https://img.shields.io/badge/License-AGPLv3-22C55E?style=for-the-badge&labelColor=171B1F"></a>
 </p>
 
@@ -47,8 +47,8 @@ UAD turns those links into an install plan before touching disk. It resolves pro
       Known provider SHA256 and file sizes are checked when available. New files are staged first; a forced repair does not replace the existing file until the replacement has already passed verification.
     </td>
     <td width="50%" valign="top">
-      <h3>Useful live progress</h3>
-      External integrations such as H3 Studio receive current filename, overall progress, downloaded/total bytes and file X/Y. Large multi-file installs no longer look frozen while the backend is working.
+      <h3>Visible progress</h3>
+      H3 Studio and other integrations receive current filename, percent, bytes and file X/Y. UAD also prints rate-limited transfer, verification and Xet backend status directly into the ComfyUI terminal.
     </td>
   </tr>
 </table>
@@ -87,6 +87,16 @@ The default is automatic:
 - everything else keeps Xet adaptive concurrency.
 
 This means UAD stays fast on high-bandwidth machines without making Lightning-specific paths a requirement for normal use.
+
+## Verification modes
+
+UAD deliberately separates **fast inventory checks** from **deep integrity verification**.
+
+`/uad/verify-fast`, used by setup UIs such as H3 Studio, checks the logical model path, exact file size when provider metadata exposes it, and the model container/header. It does **not** reread a 10–30 GB model just to recompute SHA256 every time a setup panel opens. This makes a multi-model inventory scan effectively metadata-bound rather than storage-bandwidth-bound.
+
+Downloads and repairs still perform the deep provider SHA256 check when a trusted hash is available. After a staged file passes that deep verification, UAD atomically renames the same bytes into place and only repeats the cheap size/header check instead of hashing the entire file twice.
+
+Read-only fast verification also supports a final model-file symlink whose logical path lives inside `ComfyUI/models`. Directory symlink escapes remain rejected, and writes keep the stricter destination rules.
 
 ## Supported sources
 

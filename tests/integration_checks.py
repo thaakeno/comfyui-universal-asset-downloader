@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import shutil
+import struct
 import sys
 import types
 from pathlib import Path
@@ -52,9 +54,54 @@ sys.modules["nodes.integration_api"] = integration
 assert integration_spec.loader is not None
 integration_spec.loader.exec_module(integration)
 
+async_spec = importlib.util.spec_from_file_location("nodes.async_api", nodes_dir / "async_api.py")
+async_api = importlib.util.module_from_spec(async_spec)
+sys.modules["nodes.async_api"] = async_api
+assert async_spec.loader is not None
+async_spec.loader.exec_module(async_api)
+
+
+def _write_tiny_safetensors(path: Path) -> None:
+    header = b'{"x":{}}'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(struct.pack("<Q", len(header)) + header + b"payload")
+
+
+def _check_symlink_fast_verify() -> None:
+    models = Path(folder_paths.models_dir)
+    external = Path.cwd() / ".test-external-uad"
+    shutil.rmtree(models, ignore_errors=True)
+    shutil.rmtree(external, ignore_errors=True)
+    try:
+        loras = models / "loras"
+        loras.mkdir(parents=True, exist_ok=True)
+        real = external / "model.safetensors"
+        _write_tiny_safetensors(real)
+        logical = loras / "model.safetensors"
+        logical.symlink_to(real.resolve())
+
+        result = async_api._verify_fast_one(
+            {
+                "destination": "loras",
+                "filename": logical.name,
+                "size_bytes": real.stat().st_size,
+                # Deliberately wrong hash: fast verification must not reread and
+                # reject the whole file just because a provider SHA is present.
+                "sha256": "0" * 64,
+            }
+        )
+        assert result["ok"] is True
+        assert result["status"] == "verified_fast"
+        assert result["verification_level"] == "fast"
+        assert result["symlink"] is True
+    finally:
+        shutil.rmtree(models, ignore_errors=True)
+        shutil.rmtree(external, ignore_errors=True)
+
 
 def run():
     assert "vae_approx" in service.ALLOWED_DESTINATIONS
+    assert "pdd_heads" in service.ALLOWED_DESTINATIONS
     assert service.infer_destination(
         "Kijai/MiniMax-H3-TAE",
         "taeh3.safetensors",
@@ -91,7 +138,10 @@ def run():
     assert ("POST", "/uad/install") in registered
     assert ("POST", "/uad/analyze") in registered
     assert ("POST", "/uad/verify") in registered
+    assert ("POST", "/uad/analyze-fast") in registered
+    assert ("POST", "/uad/verify-fast") in registered
 
+    _check_symlink_fast_verify()
     print("integration checks passed")
 
 
