@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-universal-asset-downloader"
 description = "A metadata-aware, verified model asset installer for ComfyUI with Hugging Face and Civitai analysis."
-version = "2.0.0"
+version = "2.0.1"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
 dependencies = [
