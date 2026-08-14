@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import shutil
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -9,8 +11,9 @@ from aiohttp import web
 from server import PromptServer
 
 from . import smart_asset_service as service
+from .hf_xet_download import configure_xet_environment, stage_huggingface_asset
 
-UAD_VERSION = "2.0.1"
+UAD_VERSION = "2.1.0"
 MAX_BATCH_ITEMS = 64
 
 # Extend the v2 destination vocabulary before any analysis happens. These
@@ -46,8 +49,6 @@ def _enhanced_infer_destination(
             "reason": "MiniMax H3 PDD student-adapter signature",
         }
 
-    # Approximate preview VAEs are intentionally separate from final VAEs in
-    # ComfyUI. TAEH3 is the important H3 case, but keep the rule generic.
     if any(token in text for token in ("taeh3", "vae_approx", "tiny_vae", "preview_vae")):
         return {
             "asset_type": "Preview VAE",
@@ -89,9 +90,6 @@ def validate_install_asset(asset: dict[str, Any]) -> dict[str, Any]:
     filename = str(asset.get("filename") or "").strip()
     target = service.safe_target(destination, filename)
 
-    # The safe target check normalizes the basename and guarantees containment.
-    # Keep model installs model-like rather than allowing the endpoint to become
-    # a general-purpose file writer.
     if target.suffix.lower() not in service.MODEL_EXTENSIONS:
         raise ValueError(f"Unsupported model file extension: {target.suffix or '<none>'}")
 
@@ -99,13 +97,90 @@ def validate_install_asset(asset: dict[str, Any]) -> dict[str, Any]:
     if size < 0:
         raise ValueError("Asset size cannot be negative.")
 
-    return {
+    normalized = {
         **asset,
         "provider": provider,
         "destination": destination,
         "filename": target.name,
         "download_url": download_url,
     }
+
+    # External integrations may pass a direct HF URL rather than a prior
+    # analyze result. Recover repo/revision/path so the Xet backend can still be
+    # used instead of silently dropping to plain HTTP.
+    if provider == "huggingface" and (not normalized.get("repo_id") or not normalized.get("remote_path")):
+        try:
+            repo_id, revision, direct_file, _prefix = service._hf_parse(download_url)
+            if direct_file:
+                normalized["repo_id"] = repo_id
+                normalized["revision"] = revision
+                normalized["remote_path"] = direct_file
+        except Exception:
+            pass
+
+    return normalized
+
+
+def _download_huggingface_xet(
+    asset: dict[str, Any],
+    hf_token: str = "",
+    force: bool = False,
+    progress_callback=None,
+) -> dict[str, Any]:
+    target = service.safe_target(asset.get("destination") or "unclassified", asset.get("filename") or "")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    expected_size = int(asset.get("size_bytes") or 0) or None
+    expected_hash = str(asset.get("sha256") or "").lower()
+
+    if target.exists() and not force:
+        verification = service.verify_file(target, expected_size, expected_hash)
+        if verification["ok"]:
+            return {**verification, "skipped": True, "asset": asset, "backend": "hf_xet"}
+        raise ValueError(
+            f"{target.name} already exists but failed verification. Enable force download to replace it safely."
+        )
+
+    if expected_size:
+        free = shutil.disk_usage(target.parent).free
+        required = expected_size + max(512 * 1024 * 1024, int(expected_size * 0.03))
+        if free < required:
+            raise OSError(
+                f"Not enough free disk space for {target.name}: "
+                f"need about {service.human_size(required)}, have {service.human_size(free)}."
+            )
+
+    downloaded = None
+    stage_dir = None
+    profile: dict[str, Any] = {}
+    try:
+        downloaded, stage_dir, profile = stage_huggingface_asset(
+            asset,
+            service.models_dir(),
+            hf_token=hf_token,
+            force=force,
+            progress_callback=progress_callback,
+        )
+        staged_verification = service.verify_file(downloaded, expected_size, expected_hash)
+        if not staged_verification["ok"]:
+            raise IOError(staged_verification.get("message") or f"Verification failed for {target.name}.")
+
+        # Same-filesystem staging means os.replace is atomic. With force=True,
+        # the old file stays intact until the replacement has already passed
+        # size/hash/format verification.
+        os.replace(downloaded, target)
+        verification = service.verify_file(target, expected_size, expected_hash)
+        if not verification["ok"]:
+            raise IOError(verification.get("message") or f"Final verification failed for {target.name}.")
+        return {
+            **verification,
+            "skipped": False,
+            "asset": asset,
+            "backend": "hf_xet",
+            "xet": profile,
+        }
+    finally:
+        if stage_dir is not None:
+            shutil.rmtree(stage_dir, ignore_errors=True)
 
 
 def secure_download_assets(
@@ -119,23 +194,46 @@ def secure_download_assets(
         raise ValueError("Select at least one model file to install.")
     if len(assets) > MAX_BATCH_ITEMS:
         raise ValueError(f"Refusing to install more than {MAX_BATCH_ITEMS} files in one batch.")
+
     validated = [validate_install_asset(asset) for asset in assets]
-    return _ORIGINAL_DOWNLOAD_ASSETS(
-        validated,
-        hf_token=hf_token,
-        civitai_api_key=civitai_api_key,
-        force=force,
-        progress_callback=progress_callback,
-    )
+    results: list[dict[str, Any]] = []
+    for asset in validated:
+        if asset.get("provider") == "huggingface" and asset.get("repo_id") and asset.get("remote_path"):
+            results.append(
+                _download_huggingface_xet(
+                    asset,
+                    hf_token=hf_token,
+                    force=force,
+                    progress_callback=progress_callback,
+                )
+            )
+        else:
+            results.extend(
+                _ORIGINAL_DOWNLOAD_ASSETS(
+                    [asset],
+                    hf_token=hf_token,
+                    civitai_api_key=civitai_api_key,
+                    force=force,
+                    progress_callback=progress_callback,
+                )
+            )
+    return results
 
 
 # Patch the function imported by UniversalAssetDownloader so standalone node
-# installs and external integrations share exactly the same safety gate.
+# installs and external integrations share exactly the same safety/Xet path.
 service.download_assets = secure_download_assets
 
 
 def _models_root() -> str:
     return str(service.models_dir())
+
+
+def _xet_profile() -> dict[str, Any]:
+    try:
+        return configure_xet_environment(service.models_dir())
+    except Exception as exc:
+        return {"backend": "huggingface_hub+hf_xet", "error": str(exc), "high_performance": False}
 
 
 def _send_external_progress(
@@ -170,12 +268,14 @@ def _send_external_progress(
 
 @PromptServer.instance.routes.get("/uad/status")
 async def api_status(_request):
+    profile = _xet_profile()
     return web.json_response(
         {
             "ok": True,
             "name": "Universal Asset Downloader",
             "version": UAD_VERSION,
             "models_dir": _models_root(),
+            "huggingface": profile,
             "capabilities": {
                 "analyze": True,
                 "verify": True,
@@ -186,6 +286,8 @@ async def api_status(_request):
                 "nonblocking_analysis": True,
                 "rich_progress": True,
                 "pdd_heads": True,
+                "hf_xet": True,
+                "hf_xet_high_performance": bool(profile.get("high_performance")),
             },
         },
         headers={"Cache-Control": "no-store"},
@@ -214,10 +316,10 @@ async def api_install(request):
 
             def progress(downloaded: int, total: int, current_asset: dict[str, Any]) -> None:
                 if total_expected > 0:
-                    overall = (completed_before + min(downloaded, total)) / total_expected * 100.0
+                    denominator = total_expected
+                    current_total = total or int(current_asset.get("size_bytes") or 0)
+                    overall = (completed_before + min(downloaded, current_total or downloaded)) / denominator * 100.0
                 else:
-                    # Unknown aggregate size: still report the per-file fraction,
-                    # folded into the batch so the UI visibly advances.
                     file_fraction = (downloaded / total) if total else 0.0
                     overall = ((file_zero_index + file_fraction) / max(1, file_count)) * 100.0
                 _send_external_progress(
@@ -232,9 +334,10 @@ async def api_install(request):
                 )
 
             starting_progress = (file_zero_index / max(1, file_count)) * 100.0
+            backend = "Xet" if asset.get("provider") == "huggingface" else asset.get("provider", "provider")
             _send_external_progress(
                 node_id,
-                f"Preparing {asset.get('filename', 'model')}…",
+                f"Preparing {asset.get('filename', 'model')} · {backend}",
                 starting_progress,
                 asset,
                 downloaded_bytes=0,
@@ -276,6 +379,8 @@ async def api_install(request):
                     "skipped": bool(result.get("skipped")),
                     "filename": asset.get("filename"),
                     "destination": asset.get("destination"),
+                    "backend": result.get("backend"),
+                    "xet": result.get("xet"),
                 }
             )
         return web.json_response({"ok": True, "results": compact})
