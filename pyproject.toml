@@ -1,11 +1,16 @@
 [project]
 name = "comfyui-universal-asset-downloader"
-description = "A metadata-aware, verified model asset installer for ComfyUI with Hugging Face and Civitai analysis."
-version = "2.0.1"
+description = "A metadata-aware, verified model asset installer for ComfyUI with Xet-accelerated Hugging Face downloads and Civitai analysis."
+version = "2.1.0"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
 dependencies = [
   "requests>=2.31,<3",
+  "huggingface_hub>=0.36.2,<2",
+  "hf_xet>=1.5.2,<2",
+]
+classifiers = [
+  "Operating System :: OS Independent",
 ]
 
 [project.urls]
