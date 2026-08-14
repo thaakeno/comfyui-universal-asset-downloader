@@ -14,7 +14,7 @@ from server import PromptServer
 from . import smart_asset_service as service
 from .hf_xet_download import configure_xet_environment, stage_huggingface_asset
 
-UAD_VERSION = "2.1.2"
+UAD_VERSION = "2.1.3"
 MAX_BATCH_ITEMS = 64
 
 # Extend the v2 destination vocabulary before any analysis happens. These
@@ -29,6 +29,12 @@ def _console(message: str) -> None:
     print(f"[UAD] {message}", flush=True)
 
 
+def _human_rate(byte_count: int, seconds: float) -> str:
+    if byte_count <= 0 or seconds <= 0:
+        return ""
+    return f"{service.human_size(int(byte_count / seconds))}/s"
+
+
 def _enhanced_infer_destination(
     repo_id: str,
     filename: str,
@@ -37,8 +43,6 @@ def _enhanced_infer_destination(
 ) -> dict[str, Any]:
     text = f"{repo_id} {filename} {' '.join(tags or [])}".lower().replace("-", "_")
 
-    # MiniMax H3 PDD is a matched student-LoRA + displacement-head setup. Heads
-    # are not diffusion checkpoints and must never be routed to diffusion_models.
     if "pdd" in text and any(token in text for token in ("head", "heads", "displacement")):
         return {
             "asset_type": "PDD Heads",
@@ -110,9 +114,6 @@ def validate_install_asset(asset: dict[str, Any]) -> dict[str, Any]:
         "download_url": download_url,
     }
 
-    # External integrations may pass a direct HF URL rather than a prior
-    # analyze result. Recover repo/revision/path so the Xet backend can still be
-    # used instead of silently dropping to plain HTTP.
     if provider == "huggingface" and (not normalized.get("repo_id") or not normalized.get("remote_path")):
         try:
             repo_id, revision, direct_file, _prefix = service._hf_parse(download_url)
@@ -138,11 +139,11 @@ def _download_huggingface_xet(
     expected_hash = str(asset.get("sha256") or "").lower()
 
     if target.exists() and not force:
-        _console(f"Existing file · deep verification before skip · {target.name}")
         verify_started = time.monotonic()
+        _console(f"  verify existing · {target.name}")
         verification = service.verify_file(target, expected_size, expected_hash)
-        _console(f"Existing verification finished · {target.name} · {time.monotonic() - verify_started:.2f}s")
         if verification["ok"]:
+            _console(f"  ✓ existing file verified · {time.monotonic() - verify_started:.2f}s")
             return {**verification, "skipped": True, "asset": asset, "backend": "hf_xet"}
         raise ValueError(
             f"{target.name} already exists but failed verification. Enable force download to replace it safely."
@@ -169,21 +170,21 @@ def _download_huggingface_xet(
             progress_callback=progress_callback,
         )
         _console(
-            "Xet transfer finished · "
-            f"{target.name} · hp={'ON' if profile.get('high_performance') else 'adaptive'} · "
+            "  Xet transfer · "
+            f"hp={'ON' if profile.get('high_performance') else 'adaptive'} · "
             f"hub={profile.get('huggingface_hub', 'unknown')} · hf_xet={profile.get('hf_xet', 'unknown')} · "
             f"progress={profile.get('progress_bridge', 'unknown')}"
         )
 
         verify_started = time.monotonic()
         if expected_hash:
-            _console(f"SHA256 verification started · {target.name} · {service.human_size(expected_size)}")
+            _console(f"  verify SHA256 · {service.human_size(expected_size)}")
         else:
-            _console(f"Final format/size verification started · {target.name}")
+            _console("  verify format + size")
         staged_verification = service.verify_file(downloaded, expected_size, expected_hash)
         if not staged_verification["ok"]:
             raise IOError(staged_verification.get("message") or f"Verification failed for {target.name}.")
-        _console(f"Verification passed · {target.name} · {time.monotonic() - verify_started:.2f}s")
+        _console(f"  ✓ verified · {time.monotonic() - verify_started:.2f}s")
 
         # Same-filesystem staging means os.replace is atomic. The staged bytes
         # have already passed SHA256 verification, so do not reread a multi-GB
@@ -243,8 +244,6 @@ def secure_download_assets(
     return results
 
 
-# Patch the function imported by UniversalAssetDownloader so standalone node
-# installs and external integrations share exactly the same safety/Xet path.
 service.download_assets = secure_download_assets
 
 
@@ -311,6 +310,7 @@ async def api_status(_request):
                 "nonblocking_analysis": True,
                 "rich_progress": True,
                 "console_progress": True,
+                "console_progress_compact": True,
                 "pdd_heads": True,
                 "hf_xet": True,
                 "hf_xet_high_performance": bool(profile.get("high_performance")),
@@ -336,16 +336,17 @@ async def api_install(request):
         completed_before = 0
         file_count = len(validated)
         profile = _xet_profile()
+        install_started = time.monotonic()
         _console(
-            f"Install started · {file_count} file(s) · {service.human_size(total_expected)} · "
-            f"HF backend=hf_xet · hp={'ON' if profile.get('high_performance') else 'adaptive'} "
-            f"({profile.get('reason', 'auto')})"
+            f"── Install · {file_count} file(s) · {service.human_size(total_expected)} · "
+            f"hf_xet · HP {'ON' if profile.get('high_performance') else 'adaptive'} ──"
         )
 
         results: list[dict[str, Any]] = []
         for file_zero_index, asset in enumerate(validated):
             file_index = file_zero_index + 1
-            console_state = {"percent": -5, "time": 0.0}
+            file_started = time.monotonic()
+            console_state = {"percent": -10, "time": file_started, "done": False}
 
             def progress(downloaded: int, total: int, current_asset: dict[str, Any]) -> None:
                 if total_expected > 0:
@@ -366,27 +367,37 @@ async def api_install(request):
                     file_count=file_count,
                 )
 
+                if downloaded <= 0:
+                    return
                 now = time.monotonic()
+                elapsed = max(0.001, now - file_started)
                 file_percent = (downloaded / total * 100.0) if total else 0.0
-                if (
-                    downloaded == total
-                    or file_percent >= console_state["percent"] + 5
-                    or now - console_state["time"] >= 5.0
-                ):
-                    console_state["percent"] = int(file_percent // 5) * 5
-                    console_state["time"] = now
-                    amount = (
-                        f"{service.human_size(downloaded)} / {service.human_size(total)}"
-                        if total
-                        else service.human_size(downloaded)
-                    )
-                    pct = f" · {file_percent:.0f}%" if total else ""
-                    _console(f"[{file_index}/{file_count}] {current_asset.get('filename', 'model')} · {amount}{pct}")
+                complete = bool(total and downloaded >= total)
+                if complete and console_state["done"]:
+                    return
+                should_print = complete or file_percent >= console_state["percent"] + 10 or now - console_state["time"] >= 1.5
+                if not should_print:
+                    return
+                if complete:
+                    console_state["done"] = True
+                console_state["percent"] = int(file_percent // 10) * 10
+                console_state["time"] = now
+                amount = (
+                    f"{service.human_size(downloaded)} / {service.human_size(total)}"
+                    if total
+                    else service.human_size(downloaded)
+                )
+                pct = f" · {min(100.0, file_percent):.0f}%" if total else ""
+                rate = _human_rate(downloaded, elapsed)
+                rate_note = f" · {rate}" if rate else ""
+                _console(f"  [{file_index}/{file_count}] {amount}{pct}{rate_note}")
 
             starting_progress = (file_zero_index / max(1, file_count)) * 100.0
             backend = "Xet" if asset.get("provider") == "huggingface" else asset.get("provider", "provider")
+            expected = int(asset.get("size_bytes") or 0)
+            size_note = f" · {service.human_size(expected)}" if expected else ""
             _console(
-                f"[{file_index}/{file_count}] Preparing {asset.get('filename', 'model')} · "
+                f"↓ [{file_index}/{file_count}] {asset.get('filename', 'model')}{size_note} · "
                 f"{backend} → models/{asset.get('destination', 'unclassified')}"
             )
             _send_external_progress(
@@ -395,11 +406,10 @@ async def api_install(request):
                 starting_progress,
                 asset,
                 downloaded_bytes=0,
-                total_bytes=int(asset.get("size_bytes") or 0),
+                total_bytes=expected,
                 file_index=file_index,
                 file_count=file_count,
             )
-            batch_started = time.monotonic()
             batch = await asyncio.to_thread(
                 secure_download_assets,
                 [asset],
@@ -409,12 +419,12 @@ async def api_install(request):
                 progress,
             )
             results.extend(batch)
-            completed_before += int(asset.get("size_bytes") or 0)
+            completed_before += expected
             result = batch[-1] if batch else {}
             _console(
-                f"[{file_index}/{file_count}] Complete {asset.get('filename', 'model')} · "
-                f"backend={result.get('backend') or backend} · "
-                f"{'reused' if result.get('skipped') else 'installed'} · {time.monotonic() - batch_started:.2f}s"
+                f"✓ [{file_index}/{file_count}] {asset.get('filename', 'model')} · "
+                f"{'reused' if result.get('skipped') else 'installed'} · "
+                f"{time.monotonic() - file_started:.2f}s"
             )
 
         _send_external_progress(
@@ -426,7 +436,10 @@ async def api_install(request):
             file_index=file_count if file_count else None,
             file_count=file_count if file_count else None,
         )
-        _console(f"Install complete · {file_count} file(s) · {service.human_size(total_expected)}")
+        _console(
+            f"✓ Install complete · {file_count} file(s) · {service.human_size(total_expected)} · "
+            f"{time.monotonic() - install_started:.2f}s"
+        )
         compact = []
         for result in results:
             asset = result.get("asset") or {}
@@ -448,7 +461,7 @@ async def api_install(request):
         return web.json_response({"ok": True, "results": compact})
     except Exception as exc:
         _send_external_progress(node_id, f"Install failed: {exc}", 0.0)
-        _console(f"Install failed · {exc}")
+        _console(f"✗ Install failed · {exc}")
         return web.json_response({"ok": False, "error": str(exc)}, status=400)
 
 
