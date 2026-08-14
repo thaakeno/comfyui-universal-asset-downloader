@@ -1,13 +1,19 @@
 [project]
 name = "comfyui-universal-asset-downloader"
-description = "A custom node for ComfyUI that intelligently downloads assets from Civitai, Hugging Face, and MEGA."
-version = "1.0.0"
+description = "A metadata-aware, verified model asset installer for ComfyUI with Hugging Face and Civitai analysis."
+version = "2.0.0"
+requires-python = ">=3.10"
 license = {file = "LICENSE"}
+dependencies = [
+  "requests>=2.31,<3",
+]
 
 [project.urls]
 Repository = "https://github.com/thaakeno/comfyui-universal-asset-downloader"
+Documentation = "https://github.com/thaakeno/comfyui-universal-asset-downloader#readme"
+"Bug Tracker" = "https://github.com/thaakeno/comfyui-universal-asset-downloader/issues"
 
 [tool.comfy]
 PublisherId = "thaakeno"
-DisplayName = "comfyui-universal-asset-downloader"
+DisplayName = "Universal Asset Downloader"
 Icon = ""
