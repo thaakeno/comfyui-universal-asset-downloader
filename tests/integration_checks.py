@@ -54,6 +54,12 @@ sys.modules["nodes.integration_api"] = integration
 assert integration_spec.loader is not None
 integration_spec.loader.exec_module(integration)
 
+vlm_spec = importlib.util.spec_from_file_location("nodes.h3studio_vlm", nodes_dir / "h3studio_vlm.py")
+vlm = importlib.util.module_from_spec(vlm_spec)
+sys.modules["nodes.h3studio_vlm"] = vlm
+assert vlm_spec.loader is not None
+vlm_spec.loader.exec_module(vlm)
+
 async_spec = importlib.util.spec_from_file_location("nodes.async_api", nodes_dir / "async_api.py")
 async_api = importlib.util.module_from_spec(async_spec)
 sys.modules["nodes.async_api"] = async_api
@@ -102,10 +108,20 @@ def _check_symlink_fast_verify() -> None:
 def run():
     assert "vae_approx" in service.ALLOWED_DESTINATIONS
     assert "pdd_heads" in service.ALLOWED_DESTINATIONS
+    assert "h3studio_vlm" in service.ALLOWED_DESTINATIONS
     assert service.infer_destination(
         "Kijai/MiniMax-H3-TAE",
         "taeh3.safetensors",
     )["destination"] == "vae_approx"
+    assert service.infer_destination(
+        "unsloth/Qwen3.5-4B-GGUF",
+        "Qwen3.5-4B-UD-Q4_K_XL.gguf",
+    )["destination"] == "h3studio_vlm"
+    assert service.infer_destination(
+        "unsloth/Qwen3.5-4B-GGUF",
+        "mmproj-BF16.gguf",
+    )["destination"] == "h3studio_vlm"
+    assert integration.UAD_VERSION == "2.1.5"
 
     valid = integration.validate_install_asset(
         {
@@ -117,6 +133,18 @@ def run():
         }
     )
     assert valid["destination"] == "vae_approx"
+
+    qwen = integration.validate_install_asset(
+        {
+            "provider": "huggingface",
+            "download_url": "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/mmproj-BF16.gguf?download=true",
+            "destination": "h3studio_vlm",
+            "filename": "qwen3.5_4b_mmproj_bf16.gguf",
+            "size_bytes": 123,
+        }
+    )
+    assert qwen["destination"] == "h3studio_vlm"
+    assert qwen["filename"] == "qwen3.5_4b_mmproj_bf16.gguf"
 
     try:
         integration.validate_install_asset(
