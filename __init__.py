@@ -3,6 +3,7 @@
 # Import integration layers before the node class so the shared downloader is
 # patched with the strict safety/Xet gate and the nonblocking provider endpoints.
 from .nodes import integration_api as _integration_api
+from .nodes import h3studio_vlm as _h3studio_vlm  # noqa: F401
 from .nodes import async_api as _async_api  # noqa: F401
 from .nodes.universal_downloader import UniversalAssetDownloader
 
