@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import time
 from pathlib import Path
@@ -19,6 +20,10 @@ _DIRECT_TIMEOUT = (5, 15)
 
 def _console(message: str) -> None:
     print(f"[UAD] {message}", flush=True)
+
+
+def _verbose_verify() -> bool:
+    return str(os.environ.get("UAD_VERBOSE_VERIFY") or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _hf_headers(token: str) -> dict[str, str]:
@@ -103,9 +108,6 @@ def analyze_huggingface_fast(url: str, token: str = "") -> dict[str, Any]:
                         pass
                 sha256 = sha256 or _header_sha256(final.headers)
     except requests.RequestException as exc:
-        # Keep direct-file installs usable even when the provider does not
-        # expose HEAD metadata. Download/verification still performs its own
-        # safety checks.
         warning = f"Provider metadata was unavailable: {exc}"
 
     inferred = service.infer_destination(repo_id, direct_file)
@@ -139,8 +141,6 @@ def analyze_huggingface_fast(url: str, token: str = "") -> dict[str, Any]:
     }
 
 
-# The original /uad/analyze route resolves this module global at request time,
-# so direct-file links also become much cheaper for older frontends.
 service.analyze_huggingface = analyze_huggingface_fast
 
 
@@ -213,8 +213,10 @@ def _verify_fast_one(item: dict[str, Any]) -> dict[str, Any]:
 
 def _verify_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     started = time.monotonic()
-    _console(f"Fast verification started · {len(items)} model path(s) · size/header checks only")
+    verbose = _verbose_verify()
     output: list[dict[str, Any]] = []
+    counts = {"ready": 0, "missing": 0, "invalid": 0}
+    details: list[str] = []
 
     for index, item in enumerate(items, start=1):
         filename = str(item.get("filename") or "model")
@@ -222,17 +224,37 @@ def _verify_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         try:
             result = _verify_fast_one(item)
         except Exception as exc:
-            _console(f"[{index}/{len(items)}] ERROR {filename} · {exc}")
+            _console(f"Verify ERROR · {filename} · {exc}")
             raise
         output.append(result)
-        marker = "OK" if result.get("ok") else str(result.get("status") or "FAIL").upper()
-        link_note = " · symlink" if result.get("symlink") else ""
-        _console(
-            f"[{index}/{len(items)}] {marker} {filename} · "
-            f"{service.human_size(result.get('size_bytes'))}{link_note} · {time.monotonic() - item_started:.2f}s"
-        )
+        if result.get("ok"):
+            counts["ready"] += 1
+            marker = "READY"
+        elif result.get("status") == "missing":
+            counts["missing"] += 1
+            marker = "MISSING"
+        else:
+            counts["invalid"] += 1
+            marker = str(result.get("status") or "INVALID").upper()
+        if verbose:
+            size = service.human_size(result.get("size_bytes")) if result.get("size_bytes") else "—"
+            link_note = " · symlink" if result.get("symlink") else ""
+            details.append(
+                f"  [{index}/{len(items)}] {marker:<8} {filename} · {size}{link_note} · {time.monotonic() - item_started:.2f}s"
+            )
 
-    _console(f"Fast verification finished · {time.monotonic() - started:.2f}s")
+    elapsed = time.monotonic() - started
+    _console(
+        f"Verify · {counts['ready']} ready · {counts['missing']} missing · {counts['invalid']} invalid · "
+        f"{len(items)} checked · {elapsed:.2f}s"
+    )
+    if verbose and details:
+        for detail in details:
+            _console(detail)
+    elif counts["invalid"]:
+        for item, result in zip(items, output, strict=False):
+            if not result.get("ok") and result.get("status") != "missing":
+                _console(f"  INVALID · {item.get('filename', 'model')} · {result.get('message', '')}")
     return output
 
 
