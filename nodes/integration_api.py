@@ -10,7 +10,7 @@ from server import PromptServer
 
 from . import smart_asset_service as service
 
-UAD_VERSION = "2.0.0"
+UAD_VERSION = "2.0.1"
 MAX_BATCH_ITEMS = 64
 
 # Extend the v2 destination vocabulary before any analysis happens. This also
@@ -149,6 +149,7 @@ async def api_status(_request):
                 "provider_hashes": True,
                 "atomic_downloads": True,
                 "external_integration": True,
+                "nonblocking_analysis": True,
             },
         },
         headers={"Cache-Control": "no-store"},
