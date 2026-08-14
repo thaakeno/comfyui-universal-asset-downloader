@@ -11,7 +11,7 @@ Paste a Hugging Face or Civitai link. UAD inspects provider metadata first, clas
   <img alt="ComfyUI custom node" src="https://img.shields.io/badge/ComfyUI-Custom%20Node-0EA5E9?style=for-the-badge&labelColor=171B1F">
   <img alt="Hugging Face Xet" src="https://img.shields.io/badge/Hugging%20Face-hf__xet-FFD21E?style=for-the-badge&logo=huggingface&logoColor=111827&labelColor=171B1F">
   <img alt="Verified installs" src="https://img.shields.io/badge/Install-Verified%20%2B%20Atomic-A855F7?style=for-the-badge&labelColor=171B1F">
-  <img alt="Version 2.1" src="https://img.shields.io/badge/Version-2.1.0-F59E0B?style=for-the-badge&labelColor=171B1F">
+  <img alt="Version 2.1.1" src="https://img.shields.io/badge/Version-2.1.1-F59E0B?style=for-the-badge&labelColor=171B1F">
   <a href="#license"><img alt="AGPLv3 license" src="https://img.shields.io/badge/License-AGPLv3-22C55E?style=for-the-badge&labelColor=171B1F"></a>
 </p>
 
