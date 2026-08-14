@@ -1,9 +1,9 @@
 """ComfyUI entry point for Universal Asset Downloader."""
 
-# Import the integration layer first. It extends the v2 analyzer with safe
-# external-install routes and patches the shared installer safety gate before
-# the node class imports those helpers.
+# Import integration layers before the node class so the shared downloader is
+# patched with the strict safety gate and the nonblocking provider endpoints.
 from .nodes import integration_api as _integration_api  # noqa: F401
+from .nodes import async_api as _async_api  # noqa: F401
 from .nodes.universal_downloader import UniversalAssetDownloader
 
 NODE_CLASS_MAPPINGS = {
