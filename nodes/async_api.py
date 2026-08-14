@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
@@ -13,6 +15,10 @@ from . import smart_asset_service as service
 
 _ORIGINAL_HF_ANALYZER = service.analyze_huggingface
 _DIRECT_TIMEOUT = (5, 15)
+
+
+def _console(message: str) -> None:
+    print(f"[UAD] {message}", flush=True)
 
 
 def _hf_headers(token: str) -> dict[str, str]:
@@ -138,12 +144,95 @@ def analyze_huggingface_fast(url: str, token: str = "") -> dict[str, Any]:
 service.analyze_huggingface = analyze_huggingface_fast
 
 
+def _safe_verify_target(destination: str, filename: str) -> Path:
+    """Return a logical model path without resolving the final symlink.
+
+    Downloads must never follow a symlink out of ComfyUI/models, but verification
+    is read-only and needs to support legitimate model-file symlinks used by RAM
+    caches and persistent model stores. Directory symlink escapes are still
+    rejected: only the final file component may point elsewhere.
+    """
+
+    destination = str(destination or "").strip().lower()
+    if destination not in service.ALLOWED_DESTINATIONS:
+        raise ValueError(f"Unsupported destination: {destination!r}")
+
+    root = service.models_dir().expanduser().resolve()
+    parent = (root / destination).resolve()
+    try:
+        parent.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("Verification directory escapes ComfyUI/models.") from exc
+
+    return parent / service._safe_filename(filename)
+
+
+def _verify_fast_one(item: dict[str, Any]) -> dict[str, Any]:
+    destination = item.get("destination") or "unclassified"
+    path = _safe_verify_target(destination, item.get("filename") or "")
+    if not path.is_file():
+        return {
+            "ok": False,
+            "status": "missing",
+            "message": "File is not installed.",
+            "path": str(path),
+            "verification_level": "fast",
+            "symlink": path.is_symlink(),
+        }
+
+    actual_size = path.stat().st_size
+    expected_size = int(item.get("size_bytes") or 0) or None
+    if expected_size and actual_size != expected_size:
+        return {
+            "ok": False,
+            "status": "size_mismatch",
+            "message": f"Size mismatch: expected {service.human_size(expected_size)}, found {service.human_size(actual_size)}.",
+            "path": str(path),
+            "size_bytes": actual_size,
+            "verification_level": "fast",
+            "symlink": path.is_symlink(),
+        }
+
+    format_ok, format_message = service._quick_format_check(path)
+    expected_hash = str(item.get("sha256") or "").lower().removeprefix("sha256:")
+    message = format_message
+    if format_ok and expected_hash:
+        message += " Provider SHA256 is available; deep hash was intentionally skipped in fast scan."
+
+    return {
+        "ok": bool(format_ok),
+        "status": "verified_fast" if format_ok else "invalid",
+        "message": message,
+        "path": str(path),
+        "sha256": expected_hash,
+        "size_bytes": actual_size,
+        "verification_level": "fast",
+        "symlink": path.is_symlink(),
+    }
+
+
 def _verify_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    started = time.monotonic()
+    _console(f"Fast verification started · {len(items)} model path(s) · size/header checks only")
     output: list[dict[str, Any]] = []
-    for item in items:
-        destination = item.get("destination") or "unclassified"
-        path = service.safe_target(destination, item.get("filename") or "")
-        output.append(service.verify_file(path, item.get("size_bytes"), item.get("sha256") or ""))
+
+    for index, item in enumerate(items, start=1):
+        filename = str(item.get("filename") or "model")
+        item_started = time.monotonic()
+        try:
+            result = _verify_fast_one(item)
+        except Exception as exc:
+            _console(f"[{index}/{len(items)}] ERROR {filename} · {exc}")
+            raise
+        output.append(result)
+        marker = "OK" if result.get("ok") else str(result.get("status") or "FAIL").upper()
+        link_note = " · symlink" if result.get("symlink") else ""
+        _console(
+            f"[{index}/{len(items)}] {marker} {filename} · "
+            f"{service.human_size(result.get('size_bytes'))}{link_note} · {time.monotonic() - item_started:.2f}s"
+        )
+
+    _console(f"Fast verification finished · {time.monotonic() - started:.2f}s")
     return output
 
 
@@ -159,6 +248,7 @@ async def api_analyze_fast(request):
         )
         return web.json_response({"ok": True, **result})
     except Exception as exc:
+        _console(f"Analyze failed · {exc}")
         return web.json_response({"ok": False, "error": str(exc)}, status=400)
 
 
@@ -170,8 +260,9 @@ async def api_verify_fast(request):
         if not isinstance(items, list):
             raise ValueError("Verification items must be a list.")
         results = await asyncio.to_thread(_verify_items, items)
-        return web.json_response({"ok": True, "results": results})
+        return web.json_response({"ok": True, "results": results, "verification_level": "fast"})
     except Exception as exc:
+        _console(f"Fast verification failed · {exc}")
         return web.json_response({"ok": False, "error": str(exc)}, status=400)
 
 
