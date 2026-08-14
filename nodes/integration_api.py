@@ -13,10 +13,9 @@ from . import smart_asset_service as service
 UAD_VERSION = "2.0.1"
 MAX_BATCH_ITEMS = 64
 
-# Extend the v2 destination vocabulary before any analysis happens. This also
-# upgrades the existing analyze/verify routes because they resolve these globals
-# from smart_asset_service at request time.
-service.ALLOWED_DESTINATIONS.add("vae_approx")
+# Extend the v2 destination vocabulary before any analysis happens. These
+# destinations are still constrained to ComfyUI/models by service.safe_target.
+service.ALLOWED_DESTINATIONS.update({"vae_approx", "pdd_heads"})
 
 _ORIGINAL_INFER_DESTINATION = service.infer_destination
 _ORIGINAL_DOWNLOAD_ASSETS = service.download_assets
@@ -29,6 +28,23 @@ def _enhanced_infer_destination(
     tags: list[str] | None = None,
 ) -> dict[str, Any]:
     text = f"{repo_id} {filename} {' '.join(tags or [])}".lower().replace("-", "_")
+
+    # MiniMax H3 PDD is a matched student-LoRA + displacement-head setup. Heads
+    # are not diffusion checkpoints and must never be routed to diffusion_models.
+    if "pdd" in text and any(token in text for token in ("head", "heads", "displacement")):
+        return {
+            "asset_type": "PDD Heads",
+            "destination": "pdd_heads",
+            "confidence": 0.995,
+            "reason": "MiniMax H3 PDD displacement-head signature",
+        }
+    if "pdd" in text and any(token in text for token in ("lora", "student", "adapter")):
+        return {
+            "asset_type": "PDD LoRA",
+            "destination": "loras",
+            "confidence": 0.995,
+            "reason": "MiniMax H3 PDD student-adapter signature",
+        }
 
     # Approximate preview VAEs are intentionally separate from final VAEs in
     # ComfyUI. TAEH3 is the important H3 case, but keep the rule generic.
@@ -122,7 +138,17 @@ def _models_root() -> str:
     return str(service.models_dir())
 
 
-def _send_external_progress(node_id: str, status: str, progress: float | None = None, asset: dict[str, Any] | None = None) -> None:
+def _send_external_progress(
+    node_id: str,
+    status: str,
+    progress: float | None = None,
+    asset: dict[str, Any] | None = None,
+    *,
+    downloaded_bytes: int | None = None,
+    total_bytes: int | None = None,
+    file_index: int | None = None,
+    file_count: int | None = None,
+) -> None:
     if not node_id:
         return
     payload: dict[str, Any] = {"node": str(node_id), "status": status}
@@ -131,6 +157,14 @@ def _send_external_progress(node_id: str, status: str, progress: float | None = 
     if asset:
         payload["filename"] = asset.get("filename", "")
         payload["destination"] = asset.get("destination", "")
+    if downloaded_bytes is not None:
+        payload["downloaded_bytes"] = max(0, int(downloaded_bytes))
+    if total_bytes is not None:
+        payload["total_bytes"] = max(0, int(total_bytes))
+    if file_index is not None:
+        payload["file_index"] = max(1, int(file_index))
+    if file_count is not None:
+        payload["file_count"] = max(1, int(file_count))
     PromptServer.instance.send_sync("uad-progress", payload)
 
 
@@ -150,6 +184,8 @@ async def api_status(_request):
                 "atomic_downloads": True,
                 "external_integration": True,
                 "nonblocking_analysis": True,
+                "rich_progress": True,
+                "pdd_heads": True,
             },
         },
         headers={"Cache-Control": "no-store"},
@@ -158,6 +194,7 @@ async def api_status(_request):
 
 @PromptServer.instance.routes.post("/uad/install")
 async def api_install(request):
+    node_id = ""
     try:
         payload = await request.json()
         items = payload.get("items") or []
@@ -169,23 +206,42 @@ async def api_install(request):
         validated = [validate_install_asset(item) for item in items]
         total_expected = sum(int(item.get("size_bytes") or 0) for item in validated)
         completed_before = 0
-
-        def progress(downloaded: int, total: int, asset: dict[str, Any]) -> None:
-            nonlocal completed_before
-            if total_expected > 0:
-                overall = (completed_before + min(downloaded, total)) / total_expected * 100.0
-            else:
-                overall = (downloaded / total * 100.0) if total else 0.0
-            _send_external_progress(
-                node_id,
-                f"Downloading {asset.get('filename', 'model')} · {overall:.1f}% overall",
-                overall,
-                asset,
-            )
+        file_count = len(validated)
 
         results: list[dict[str, Any]] = []
-        for asset in validated:
-            _send_external_progress(node_id, f"Preparing {asset.get('filename', 'model')}…", None, asset)
+        for file_zero_index, asset in enumerate(validated):
+            file_index = file_zero_index + 1
+
+            def progress(downloaded: int, total: int, current_asset: dict[str, Any]) -> None:
+                if total_expected > 0:
+                    overall = (completed_before + min(downloaded, total)) / total_expected * 100.0
+                else:
+                    # Unknown aggregate size: still report the per-file fraction,
+                    # folded into the batch so the UI visibly advances.
+                    file_fraction = (downloaded / total) if total else 0.0
+                    overall = ((file_zero_index + file_fraction) / max(1, file_count)) * 100.0
+                _send_external_progress(
+                    node_id,
+                    f"Downloading {current_asset.get('filename', 'model')}",
+                    overall,
+                    current_asset,
+                    downloaded_bytes=downloaded,
+                    total_bytes=total,
+                    file_index=file_index,
+                    file_count=file_count,
+                )
+
+            starting_progress = (file_zero_index / max(1, file_count)) * 100.0
+            _send_external_progress(
+                node_id,
+                f"Preparing {asset.get('filename', 'model')}…",
+                starting_progress,
+                asset,
+                downloaded_bytes=0,
+                total_bytes=int(asset.get("size_bytes") or 0),
+                file_index=file_index,
+                file_count=file_count,
+            )
             batch = await asyncio.to_thread(
                 secure_download_assets,
                 [asset],
@@ -197,7 +253,15 @@ async def api_install(request):
             results.extend(batch)
             completed_before += int(asset.get("size_bytes") or 0)
 
-        _send_external_progress(node_id, "Install complete", 100.0)
+        _send_external_progress(
+            node_id,
+            "Install complete",
+            100.0,
+            downloaded_bytes=total_expected if total_expected else None,
+            total_bytes=total_expected if total_expected else None,
+            file_index=file_count if file_count else None,
+            file_count=file_count if file_count else None,
+        )
         compact = []
         for result in results:
             asset = result.get("asset") or {}
@@ -216,11 +280,6 @@ async def api_install(request):
             )
         return web.json_response({"ok": True, "results": compact})
     except Exception as exc:
-        node_id = ""
-        try:
-            node_id = str((await request.json()).get("node_id") or "")
-        except Exception:
-            pass
         _send_external_progress(node_id, f"Install failed: {exc}", 0.0)
         return web.json_response({"ok": False, "error": str(exc)}, status=400)
 
