@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import contextlib
+import inspect
 import os
 import shutil
 import tempfile
+import threading
+import time
+from importlib import metadata
 from pathlib import Path
 from typing import Any, Callable
 
@@ -21,6 +25,12 @@ def _truthy(value: str | None) -> bool | None:
     if normalized in {"0", "false", "no", "off", "adaptive", "normal"}:
         return False
     return None
+
+
+def _package_version(name: str) -> str:
+    with contextlib.suppress(Exception):
+        return metadata.version(name)
+    return "unknown"
 
 
 def total_memory_bytes() -> int:
@@ -92,6 +102,8 @@ def configure_xet_environment(models_root: Path) -> dict[str, Any]:
 
     return {
         "backend": "huggingface_hub+hf_xet",
+        "huggingface_hub": _package_version("huggingface_hub"),
+        "hf_xet": _package_version("hf_xet"),
         "high_performance": high_performance,
         "reason": reason,
         "memory_bytes": memory,
@@ -129,6 +141,93 @@ def progress_tqdm(asset: dict[str, Any], callback: ProgressCallback | None, expe
     return UadHubTqdm
 
 
+def _materialized_size(path: Path) -> int:
+    """Estimate bytes physically materialized, including sparse Xet reconstructions."""
+    with contextlib.suppress(OSError):
+        stat = path.stat()
+        logical = max(0, int(stat.st_size))
+        blocks = max(0, int(getattr(stat, "st_blocks", 0) or 0) * 512)
+        if blocks and logical > blocks:
+            return blocks
+        return logical
+    return 0
+
+
+def _staging_progress_bytes(stage_dir: Path, expected_size: int | None) -> int:
+    """Track the largest materializing file without counting Hub metadata twice."""
+    best = 0
+    with contextlib.suppress(OSError):
+        for path in stage_dir.rglob("*"):
+            if not path.is_file():
+                continue
+            name = path.name.lower()
+            if name.endswith((".lock", ".json")) or name == ".gitignore":
+                continue
+            best = max(best, _materialized_size(path))
+    if expected_size:
+        return min(best, expected_size)
+    return best
+
+
+def _start_legacy_progress_monitor(
+    stage_dir: Path,
+    asset: dict[str, Any],
+    expected_size: int | None,
+    callback: ProgressCallback | None,
+) -> tuple[threading.Event, threading.Thread | None]:
+    """Bridge progress for pre-1.0 Hub APIs that lack `tqdm_class=`.
+
+    Xet may reconstruct a sparse destination with its logical size visible early,
+    so Linux `st_blocks` is used when available. On other platforms this falls
+    back to logical file growth. This monitor never controls the transfer; it
+    only reports what is physically appearing in UAD's same-filesystem staging.
+    """
+
+    stop = threading.Event()
+    if callback is None:
+        return stop, None
+
+    def run() -> None:
+        last = -1
+        while not stop.wait(0.2):
+            current = _staging_progress_bytes(stage_dir, expected_size)
+            if current <= last:
+                continue
+            last = current
+            callback(current, expected_size or 0, asset)
+
+    thread = threading.Thread(target=run, name="uad-hf-xet-progress", daemon=True)
+    thread.start()
+    return stop, thread
+
+
+def _download_kwargs(
+    hf_hub_download,
+    *,
+    repo_id: str,
+    remote_path: str,
+    revision: str,
+    stage_dir: Path,
+    hf_token: str,
+    force: bool,
+    tqdm_class,
+) -> tuple[dict[str, Any], bool]:
+    kwargs: dict[str, Any] = {
+        "repo_id": repo_id,
+        "filename": remote_path,
+        "revision": revision,
+        "local_dir": str(stage_dir),
+        "token": hf_token or None,
+        "force_download": force,
+    }
+    supports_tqdm_class = False
+    with contextlib.suppress(Exception):
+        supports_tqdm_class = "tqdm_class" in inspect.signature(hf_hub_download).parameters
+    if supports_tqdm_class:
+        kwargs["tqdm_class"] = tqdm_class
+    return kwargs, supports_tqdm_class
+
+
 def stage_huggingface_asset(
     asset: dict[str, Any],
     models_root: Path,
@@ -138,8 +237,9 @@ def stage_huggingface_asset(
 ) -> tuple[Path, Path, dict[str, Any]]:
     """Download one HF file with hf_hub_download/hf_xet into same-FS staging.
 
-    Returns `(downloaded_file, stage_dir, xet_profile)`. The caller owns final
-    verification and atomic promotion into the destination path.
+    Compatible with the H3 Studio 0.36.x Hub stack as well as current 1.x Hub
+    releases. New Hub versions use the direct tqdm callback. Older Hub versions
+    keep full Xet acceleration and get UI progress from the staging monitor.
     """
 
     from huggingface_hub import hf_hub_download
@@ -157,19 +257,24 @@ def stage_huggingface_asset(
     stage_dir = Path(tempfile.mkdtemp(prefix="hf-", dir=str(stage_parent)))
     expected_size = int(asset.get("size_bytes") or 0) or None
     tqdm_class = progress_tqdm(asset, progress_callback, expected_size)
+    kwargs, supports_tqdm_class = _download_kwargs(
+        hf_hub_download,
+        repo_id=repo_id,
+        remote_path=remote_path,
+        revision=revision,
+        stage_dir=stage_dir,
+        hf_token=hf_token,
+        force=force,
+        tqdm_class=tqdm_class,
+    )
+    profile["progress_bridge"] = "hub-tqdm" if supports_tqdm_class else "staging-monitor"
+    stop = threading.Event()
+    monitor = None
 
     try:
-        downloaded = Path(
-            hf_hub_download(
-                repo_id=repo_id,
-                filename=remote_path,
-                revision=revision,
-                local_dir=str(stage_dir),
-                token=hf_token or None,
-                force_download=force,
-                tqdm_class=tqdm_class,
-            )
-        ).resolve()
+        if not supports_tqdm_class:
+            stop, monitor = _start_legacy_progress_monitor(stage_dir, asset, expected_size, progress_callback)
+        downloaded = Path(hf_hub_download(**kwargs)).resolve()
         if not downloaded.is_file():
             raise IOError(f"Hugging Face did not produce the expected file: {downloaded}")
         downloaded.relative_to(models_root)
@@ -180,3 +285,7 @@ def stage_huggingface_asset(
     except Exception:
         shutil.rmtree(stage_dir, ignore_errors=True)
         raise
+    finally:
+        stop.set()
+        if monitor is not None:
+            monitor.join(timeout=1.0)

@@ -9,7 +9,34 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from nodes.hf_xet_download import configure_xet_environment
+from nodes.hf_xet_download import _download_kwargs, configure_xet_environment
+
+
+def old_hub(repo_id, filename, *, revision=None, local_dir=None, token=None, force_download=False):
+    return "unused"
+
+
+def new_hub(repo_id, filename, *, revision=None, local_dir=None, token=None, force_download=False, tqdm_class=None):
+    return "unused"
+
+
+def check_signature_bridge() -> None:
+    common = dict(
+        repo_id="owner/repo",
+        remote_path="model.safetensors",
+        revision="main",
+        stage_dir=Path("/tmp/uad-stage"),
+        hf_token="",
+        force=False,
+        tqdm_class=object,
+    )
+    old_kwargs, old_direct = _download_kwargs(old_hub, **common)
+    assert old_direct is False
+    assert "tqdm_class" not in old_kwargs
+
+    new_kwargs, new_direct = _download_kwargs(new_hub, **common)
+    assert new_direct is True
+    assert new_kwargs["tqdm_class"] is object
 
 
 def main() -> None:
@@ -35,6 +62,7 @@ def main() -> None:
             assert forced["reason"] == "UAD override"
             assert os.environ["HF_XET_HIGH_PERFORMANCE"] == "1"
 
+        check_signature_bridge()
         print("xet policy checks: OK")
     finally:
         os.environ.clear()
