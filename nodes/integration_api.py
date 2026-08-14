@@ -13,7 +13,7 @@ from server import PromptServer
 from . import smart_asset_service as service
 from .hf_xet_download import configure_xet_environment, stage_huggingface_asset
 
-UAD_VERSION = "2.1.0"
+UAD_VERSION = "2.1.1"
 MAX_BATCH_ITEMS = 64
 
 # Extend the v2 destination vocabulary before any analysis happens. These
