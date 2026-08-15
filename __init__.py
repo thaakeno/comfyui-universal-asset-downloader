@@ -5,6 +5,7 @@
 from .nodes import integration_api as _integration_api
 from .nodes import h3studio_vlm as _h3studio_vlm  # noqa: F401
 from .nodes import async_api as _async_api  # noqa: F401
+from .nodes import h3studio_face_assets as _h3studio_face_assets  # noqa: F401
 from .nodes.universal_downloader import UniversalAssetDownloader
 
 NODE_CLASS_MAPPINGS = {
