@@ -19,6 +19,7 @@ FACE_REFINE_DESTINATIONS = {
 _META_HOSTS = {"dl.fbaipublicfiles.com"}
 
 service.ALLOWED_DESTINATIONS.update(FACE_REFINE_DESTINATIONS)
+integration_api.UAD_VERSION = "2.1.4"
 
 _original_validate_install_asset = integration_api.validate_install_asset
 
