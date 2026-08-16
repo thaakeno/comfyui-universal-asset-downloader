@@ -1,8 +1,8 @@
 """Safe H3 Studio Face Refine asset destinations and provider policy.
 
 The additional destinations are fixed allow-list entries under ``ComfyUI/models``.
-For optional SAM we also allow only Meta's official HTTPS checkpoint host; this is
-not a generic arbitrary-URL escape hatch.
+For optional SAM we allow exactly the Meta-hosted checkpoint used by H3 Studio's
+setup panel; this is not a generic arbitrary-URL escape hatch.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ FACE_REFINE_DESTINATIONS = {
     "sams",
 }
 _META_HOSTS = {"dl.fbaipublicfiles.com"}
+_META_SAM_PATHS = {"/segment_anything/sam_vit_b_01ec64.pth"}
 
 service.ALLOWED_DESTINATIONS.update(FACE_REFINE_DESTINATIONS)
 
@@ -31,11 +32,14 @@ def _validate_install_asset(asset):
     download_url = str(asset.get("download_url") or "").strip()
     parsed = urlparse(download_url)
     host = parsed.netloc.lower().split(":", 1)[0]
-    if parsed.scheme != "https" or host not in _META_HOSTS:
-        raise ValueError("Meta model installs are restricted to dl.fbaipublicfiles.com over HTTPS.")
+    if parsed.scheme != "https" or host not in _META_HOSTS or parsed.path not in _META_SAM_PATHS:
+        raise ValueError("Meta model installs are restricted to H3 Studio's pinned official SAM checkpoint.")
 
     destination = str(asset.get("destination") or "").strip().lower()
     filename = str(asset.get("filename") or "").strip()
+    if destination != "sams" or filename != "sam_vit_b_01ec64.pth":
+        raise ValueError("The pinned Meta SAM checkpoint may only be installed as models/sams/sam_vit_b_01ec64.pth.")
+
     target = service.safe_target(destination, filename)
     if target.suffix.lower() not in service.MODEL_EXTENSIONS:
         raise ValueError(f"Unsupported model file extension: {target.suffix or '<none>'}")
