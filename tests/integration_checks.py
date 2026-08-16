@@ -66,6 +66,12 @@ sys.modules["nodes.async_api"] = async_api
 assert async_spec.loader is not None
 async_spec.loader.exec_module(async_api)
 
+face_spec = importlib.util.spec_from_file_location("nodes.h3studio_face_assets", nodes_dir / "h3studio_face_assets.py")
+face_assets = importlib.util.module_from_spec(face_spec)
+sys.modules["nodes.h3studio_face_assets"] = face_assets
+assert face_spec.loader is not None
+face_spec.loader.exec_module(face_assets)
+
 
 def _write_tiny_safetensors(path: Path) -> None:
     header = b'{"x":{}}'
@@ -103,6 +109,55 @@ def _check_symlink_fast_verify() -> None:
     finally:
         shutil.rmtree(models, ignore_errors=True)
         shutil.rmtree(external, ignore_errors=True)
+
+
+def _check_face_refine_assets() -> None:
+    assert "ultralytics/bbox" in service.ALLOWED_DESTINATIONS
+    assert "sams" in service.ALLOWED_DESTINATIONS
+
+    yolo_target = service.safe_target("ultralytics/bbox", "face_yolov8m.pt")
+    assert yolo_target == Path(folder_paths.models_dir).resolve() / "ultralytics" / "bbox" / "face_yolov8m.pt"
+
+    sam = integration.validate_install_asset(
+        {
+            "provider": "meta",
+            "download_url": "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth",
+            "destination": "sams",
+            "filename": "sam_vit_b_01ec64.pth",
+            "size_bytes": 375_042_383,
+        }
+    )
+    assert sam["provider"] == "meta"
+    assert sam["destination"] == "sams"
+    assert sam["filename"] == "sam_vit_b_01ec64.pth"
+
+    rejected = [
+        {
+            "provider": "meta",
+            "download_url": "https://evil.example/sam_vit_b_01ec64.pth",
+            "destination": "sams",
+            "filename": "sam_vit_b_01ec64.pth",
+        },
+        {
+            "provider": "meta",
+            "download_url": "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth",
+            "destination": "sams",
+            "filename": "sam_vit_h_4b8939.pth",
+        },
+        {
+            "provider": "meta",
+            "download_url": "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth",
+            "destination": "loras",
+            "filename": "sam_vit_b_01ec64.pth",
+        },
+    ]
+    for asset in rejected:
+        try:
+            integration.validate_install_asset(asset)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"unsafe Meta asset should be rejected: {asset}")
 
 
 def run():
@@ -169,6 +224,7 @@ def run():
     assert ("POST", "/uad/analyze-fast") in registered
     assert ("POST", "/uad/verify-fast") in registered
 
+    _check_face_refine_assets()
     _check_symlink_fast_verify()
     print("integration checks passed")
 
