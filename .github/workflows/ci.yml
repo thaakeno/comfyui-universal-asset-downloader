@@ -19,6 +19,7 @@ jobs:
         run: python -m pip install -U -r requirements.txt aiohttp
       - name: Smart asset checks
         run: |
+          python tests/dependency_policy_checks.py
           python tests/smart_asset_checks.py
           python tests/integration_checks.py
           python tests/xet_policy_checks.py
