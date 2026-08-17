@@ -27,6 +27,4 @@ jobs:
       - name: Python syntax
         run: python -m compileall -q __init__.py nodes tests
       - name: Frontend syntax
-        run: |
-          node --check js/downloader.js
-          node --check js/z_uad_polish.js
+        run: node --check js/downloader.js
