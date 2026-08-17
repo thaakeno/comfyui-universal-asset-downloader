@@ -6,7 +6,7 @@ requires-python = ">=3.10"
 license = {file = "LICENSE"}
 dependencies = [
   "requests>=2.31,<3",
-  "huggingface_hub>=0.36.2,<2",
+  "huggingface_hub>=0.36.2,<1.0",
   "hf_xet>=1.5.2,<2",
 ]
 classifiers = [
