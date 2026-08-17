@@ -23,9 +23,10 @@ jobs:
           python tests/smart_asset_checks.py
           python tests/integration_checks.py
           python tests/xet_policy_checks.py
+          python tests/frontend_contract_checks.py
       - name: Python syntax
         run: python -m compileall -q __init__.py nodes tests
       - name: Frontend syntax
         run: |
           node --check js/downloader.js
-          node --check js/uad_v2_polish.js
+          node --check js/z_uad_polish.js
