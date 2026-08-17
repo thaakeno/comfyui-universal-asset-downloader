@@ -27,4 +27,7 @@ jobs:
       - name: Python syntax
         run: python -m compileall -q __init__.py nodes tests
       - name: Frontend syntax
-        run: node --check js/downloader.js
+        run: |
+          for file in js/*.js; do
+            node --check "$file"
+          done
